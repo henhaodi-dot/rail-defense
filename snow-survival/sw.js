@@ -1,13 +1,6 @@
-const CACHE = 'snow-v1';
-const ASSETS = [
-  './', './index.html',
-  './src/main.js', './src/scene.js', './src/player.js',
-  './src/joystick.js', './src/resources.js', './src/economy.js',
-  './src/ui.js', './src/camera.js',
-];
+const CACHE = 'snow-v2';
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
   self.skipWaiting();
 });
 
@@ -19,5 +12,15 @@ self.addEventListener('activate', e => {
 });
 
 self.addEventListener('fetch', e => {
-  e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
+  e.respondWith(
+    fetch(e.request)
+      .then(r => {
+        if (r.ok) {
+          const clone = r.clone();
+          caches.open(CACHE).then(c => c.put(e.request, clone));
+        }
+        return r;
+      })
+      .catch(() => caches.match(e.request))
+  );
 });
