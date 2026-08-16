@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "game-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["http-server", "-p", "8080", "-c-1", "--cors"],
+      "port": 8080
+    },
+    {
+      "name": "snow-survival",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["http-server", "snow-survival", "-p", "8081", "-c-1", "--cors"],
+      "port": 8081
+    }
+  ]
+}
