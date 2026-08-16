@@ -1,0 +1,12 @@
+{
+  "name": "Rail Defense",
+  "short_name": "RailDef",
+  "description": "3D rail tower defense game",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#b8cfe0",
+  "background_color": "#b8cfe0",
+  "icons": []
+}
