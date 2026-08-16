@@ -6,18 +6,10 @@ import { createEconomy } from './economy.js';
 import { createUI, updateHUD, showProgress, hideProgress, showFull, hideFull, showSellFeedback } from './ui.js';
 import { updateCamera, worldToScreen } from './camera.js';
 
-/* ---- visible error handler ---- */
-window.onerror = (msg, src, line) => {
-  const d = document.createElement('div');
-  Object.assign(d.style, {
-    position: 'fixed', top: '60px', left: '8px', right: '8px',
-    background: 'rgba(200,0,0,.85)', color: '#fff', padding: '8px',
-    font: '12px monospace', zIndex: '9999', borderRadius: '8px',
-    wordBreak: 'break-all',
-  });
-  d.textContent = `${msg} (${src}:${line})`;
-  document.body.appendChild(d);
-};
+/* ---- mark game started, hide boot diagnostics ---- */
+window._gameStarted = true;
+const dbgEl = document.getElementById('dbg');
+if (dbgEl) dbgEl.style.display = 'none';
 
 /* ---- FPS counter ---- */
 const fpsEl = document.createElement('div');
