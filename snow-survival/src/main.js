@@ -6,6 +6,31 @@ import { createEconomy } from './economy.js';
 import { createUI, updateHUD, showProgress, hideProgress, showFull, hideFull, showSellFeedback } from './ui.js';
 import { updateCamera, worldToScreen } from './camera.js';
 
+/* ---- visible error handler ---- */
+window.onerror = (msg, src, line) => {
+  const d = document.createElement('div');
+  Object.assign(d.style, {
+    position: 'fixed', top: '60px', left: '8px', right: '8px',
+    background: 'rgba(200,0,0,.85)', color: '#fff', padding: '8px',
+    font: '12px monospace', zIndex: '9999', borderRadius: '8px',
+    wordBreak: 'break-all',
+  });
+  d.textContent = `${msg} (${src}:${line})`;
+  document.body.appendChild(d);
+};
+
+/* ---- FPS counter ---- */
+const fpsEl = document.createElement('div');
+Object.assign(fpsEl.style, {
+  position: 'fixed', top: 'calc(env(safe-area-inset-top, 0px) + 8px)',
+  left: '8px', color: '#fff', background: 'rgba(0,0,0,.45)',
+  font: '600 12px/1 monospace', padding: '5px 8px', borderRadius: '8px',
+  zIndex: '50', pointerEvents: 'none',
+});
+fpsEl.textContent = '-- fps';
+document.body.appendChild(fpsEl);
+let fpsFrames = 0, fpsLast = performance.now();
+
 /* ---- init ---- */
 const player = createPlayer(scene, materials);
 const joystick = createJoystick();
@@ -30,9 +55,14 @@ const sinT = Math.sin(CAM_THETA);
 const cosT = Math.cos(CAM_THETA);
 
 /* ---- game loop ---- */
+let lastTime = performance.now();
+
 function animate() {
   requestAnimationFrame(animate);
-  const dt = Math.min(clock.getDelta(), 0.1);
+
+  const now = performance.now();
+  const dt = Math.min((now - lastTime) / 1000, 0.1);
+  lastTime = now;
 
   // input
   const joy = joystick.getInput();
@@ -98,6 +128,14 @@ function animate() {
   updateSnowfall(dt, player.mesh.position);
 
   renderer.render(scene, camera);
+
+  // FPS
+  fpsFrames++;
+  if (now - fpsLast >= 500) {
+    fpsEl.textContent = Math.round(fpsFrames / ((now - fpsLast) / 1000)) + ' fps';
+    fpsFrames = 0;
+    fpsLast = now;
+  }
 }
 
 animate();

@@ -11,6 +11,8 @@ export function createJoystick() {
     border: '2px solid rgba(255,255,255,0.35)',
     zIndex: '100',
     touchAction: 'none',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
   });
 
   const knob = document.createElement('div');
@@ -25,11 +27,12 @@ export function createJoystick() {
     borderRadius: '50%',
     background: 'rgba(255,255,255,0.5)',
     border: '2px solid rgba(255,255,255,0.7)',
+    pointerEvents: 'none',
   });
   outer.appendChild(knob);
   document.body.appendChild(outer);
 
-  const state = { x: 0, z: 0, pid: -1 };
+  const state = { x: 0, z: 0, active: false };
   const MAX = 42;
 
   function center() {
@@ -37,10 +40,10 @@ export function createJoystick() {
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   }
 
-  function move(e) {
+  function move(cx, cy) {
     const c = center();
-    let dx = e.clientX - c.x;
-    let dy = e.clientY - c.y;
+    let dx = cx - c.x;
+    let dy = cy - c.y;
     const d = Math.sqrt(dx * dx + dy * dy);
     if (d > MAX) { dx = dx / d * MAX; dy = dy / d * MAX; }
     knob.style.transform = `translate(${dx}px, ${dy}px)`;
@@ -49,27 +52,55 @@ export function createJoystick() {
   }
 
   function end() {
-    state.pid = -1;
+    state.active = false;
     state.x = 0;
     state.z = 0;
     knob.style.transform = 'translate(0px, 0px)';
   }
 
-  outer.addEventListener('pointerdown', e => {
+  // Touch events (primary on mobile)
+  outer.addEventListener('touchstart', e => {
     e.preventDefault();
-    state.pid = e.pointerId;
+    state.active = true;
+    const t = e.touches[0];
+    move(t.clientX, t.clientY);
+  }, { passive: false });
+
+  outer.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (!state.active) return;
+    const t = e.touches[0];
+    move(t.clientX, t.clientY);
+  }, { passive: false });
+
+  outer.addEventListener('touchend', e => {
+    e.preventDefault();
+    end();
+  }, { passive: false });
+
+  outer.addEventListener('touchcancel', e => {
+    end();
+  });
+
+  // Pointer events (desktop fallback)
+  outer.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch') return;
+    e.preventDefault();
+    state.active = true;
     outer.setPointerCapture(e.pointerId);
-    move(e);
+    move(e.clientX, e.clientY);
   });
   outer.addEventListener('pointermove', e => {
-    if (e.pointerId !== state.pid) return;
-    move(e);
+    if (e.pointerType === 'touch' || !state.active) return;
+    move(e.clientX, e.clientY);
   });
   outer.addEventListener('pointerup', e => {
-    if (e.pointerId === state.pid) end();
+    if (e.pointerType === 'touch') return;
+    end();
   });
   outer.addEventListener('pointercancel', e => {
-    if (e.pointerId === state.pid) end();
+    if (e.pointerType === 'touch') return;
+    end();
   });
 
   return {
