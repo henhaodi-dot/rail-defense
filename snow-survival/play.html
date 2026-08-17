@@ -4,65 +4,442 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#b8cfe0">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="manifest" href="manifest.json">
 <title>雪地生存</title>
 <style>
 *{margin:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;}
 html,body{height:100%;overflow:hidden;background:#b8cfe0;touch-action:none;}
 canvas{display:block;width:100%;height:100%;touch-action:none;}
-#dbg{position:fixed;top:40%;left:10%;right:10%;background:rgba(0,0,0,.8);color:#0f0;
-     font:13px/1.6 monospace;padding:16px;border-radius:12px;z-index:99999;
-     word-break:break-all;max-height:50%;overflow:auto;}
+#fps{position:fixed;top:8px;left:8px;color:#fff;background:rgba(0,0,0,.45);
+     font:600 12px/1 monospace;padding:5px 8px;border-radius:8px;z-index:50;pointer-events:none;}
+#hud{position:fixed;top:8px;right:8px;padding:8px 14px;background:rgba(0,0,0,.5);
+     border-radius:12px;color:#fff;font:600 13px/1.8 system-ui,sans-serif;z-index:50;
+     pointer-events:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+#bar{position:fixed;width:56px;height:7px;background:rgba(0,0,0,.45);border-radius:4px;
+     overflow:hidden;z-index:50;display:none;pointer-events:none;}
+#barFill{width:0%;height:100%;background:#66cc55;border-radius:4px;}
+#full{position:fixed;background:#f06030;color:#fff;font:bold 11px system-ui;
+      padding:2px 8px;border-radius:6px;z-index:50;display:none;pointer-events:none;white-space:nowrap;}
+#sellPop{position:fixed;color:#ffe040;font:bold 18px system-ui;z-index:60;pointer-events:none;
+         opacity:0;text-shadow:0 1px 4px rgba(0,0,0,.6);white-space:nowrap;}
+#joy{position:fixed;left:20px;bottom:20px;width:120px;height:120px;border-radius:50%;
+     background:rgba(255,255,255,.15);border:2px solid rgba(255,255,255,.35);z-index:100;touch-action:none;}
+#knob{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;
+      border-radius:50%;background:rgba(255,255,255,.5);border:2px solid rgba(255,255,255,.7);pointer-events:none;}
+#err{position:fixed;top:60px;left:8px;right:8px;background:rgba(200,0,0,.85);color:#fff;
+     padding:10px;font:12px/1.4 monospace;z-index:99999;border-radius:8px;word-break:break-all;display:none;}
 </style>
 </head>
 <body>
-<div id="dbg">Loading...</div>
+<div id="fps">--</div>
+<div id="hud"></div>
+<div id="bar"><div id="barFill"></div></div>
+<div id="full">背包已满</div>
+<div id="sellPop"></div>
+<div id="joy"><div id="knob"></div></div>
+<div id="err"></div>
+
 <script>
-// Pre-module diagnostics — catches errors modules can't
-var dbg = document.getElementById('dbg');
-var logs = ['[boot] page loaded'];
-
-function addLog(s) {
-  logs.push(s);
-  dbg.textContent = logs.join('\n');
-  dbg.style.display = 'block';
+// Unregister all service workers
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.getRegistrations().then(function(r){r.forEach(function(sw){sw.unregister()})});
 }
-
-window.onerror = function(msg, src, line, col, err) {
-  addLog('[ERROR] ' + msg + ' @ ' + (src||'?') + ':' + line);
-};
-window.onunhandledrejection = function(e) {
-  addLog('[REJECT] ' + (e.reason ? (e.reason.message || e.reason) : 'unknown'));
-};
-
-// Unregister old service workers that might serve stale cache
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.getRegistrations().then(function(regs) {
-    regs.forEach(function(r) { r.unregister(); });
-    if (regs.length) addLog('[sw] unregistered ' + regs.length + ' old SW(s)');
-  });
-}
-
-// If game hasn't started in 8 seconds, show diagnostic
-window._gameStarted = false;
-setTimeout(function() {
-  if (!window._gameStarted) {
-    addLog('[TIMEOUT] game did not start within 8s');
-    addLog('[info] UA: ' + navigator.userAgent.substring(0, 80));
-    addLog('[info] screen: ' + screen.width + 'x' + screen.height);
-    addLog('[info] webgl: ' + (function(){
-      try {
-        var c = document.createElement('canvas');
-        return !!(c.getContext('webgl2') || c.getContext('webgl'));
-      } catch(e) { return false; }
-    })());
-  }
-}, 8000);
+window.onerror=function(m,s,l){var e=document.getElementById('err');e.style.display='block';e.textContent+=m+' @'+s+':'+l+'\n'};
+window.onunhandledrejection=function(e){var el=document.getElementById('err');el.style.display='block';el.textContent+='[reject] '+(e.reason||'')+'\n'};
 </script>
+
 <script type="importmap">
 {"imports":{"three":"https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"}}
 </script>
-<script type="module" src="src/main.js"></script>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ============================================================
+   ALL GAME CODE IN ONE FILE
+   ============================================================ */
+
+/* ---- renderer ---- */
+const renderer = new THREE.WebGLRenderer({antialias:true, alpha:false});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color('#b8cfe0');
+scene.fog = new THREE.Fog('#b8cfe0', 35, 65);
+
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth/window.innerHeight, 0.1, 100);
+
+/* ---- materials ---- */
+const M = {
+  snow:   new THREE.MeshStandardMaterial({color:'#e8eef4', roughness:0.85}),
+  wood:   new THREE.MeshStandardMaterial({color:'#b07840', roughness:0.7}),
+  woodD:  new THREE.MeshStandardMaterial({color:'#8a5a2c', roughness:0.7}),
+  red:    new THREE.MeshStandardMaterial({color:'#c04030', roughness:0.6}),
+  green:  new THREE.MeshStandardMaterial({color:'#4a8a50', roughness:0.7}),
+  greenD: new THREE.MeshStandardMaterial({color:'#366838', roughness:0.7}),
+  gold:   new THREE.MeshStandardMaterial({color:'#e8c040', roughness:0.3, metalness:0.6}),
+  fence:  new THREE.MeshStandardMaterial({color:'#c8b89a', roughness:0.8}),
+  blue:   new THREE.MeshStandardMaterial({color:'#4488cc', roughness:0.6}),
+  skin:   new THREE.MeshStandardMaterial({color:'#f0c8a0', roughness:0.7}),
+  stone:  new THREE.MeshStandardMaterial({color:'#7a7a7a', roughness:0.9}),
+  stoneL: new THREE.MeshStandardMaterial({color:'#9a9a9a', roughness:0.85}),
+  meat:   new THREE.MeshStandardMaterial({color:'#cc5544', roughness:0.6}),
+  brown:  new THREE.MeshStandardMaterial({color:'#6a4a2a', roughness:0.7}),
+};
+
+/* ---- lights ---- */
+scene.add(new THREE.AmbientLight('#c0d8f0', 0.6));
+const sun = new THREE.DirectionalLight('#fff5e0', 1.1);
+sun.position.set(8,15,6);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024,1024);
+sun.shadow.camera.left=-18; sun.shadow.camera.right=18;
+sun.shadow.camera.top=18; sun.shadow.camera.bottom=-18;
+sun.shadow.camera.near=1; sun.shadow.camera.far=50;
+sun.shadow.bias=-0.002;
+scene.add(sun);
+scene.add(sun.target);
+
+/* ---- ground ---- */
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(50,50), M.snow);
+ground.rotation.x = -Math.PI/2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ---- snow mounds ---- */
+for(let i=0;i<18;i++){
+  const r=1.2+Math.random()*2;
+  const m=new THREE.Mesh(new THREE.SphereGeometry(r,12,8,0,Math.PI*2,0,Math.PI/2),M.snow);
+  m.position.set((Math.random()-.5)*38,0,(Math.random()-.5)*38);
+  m.scale.y=0.25+Math.random()*0.2;
+  m.receiveShadow=true;
+  scene.add(m);
+}
+
+/* ---- trees ---- */
+function makeTree(x,z,h){
+  const g=new THREE.Group();
+  const trunk=new THREE.Mesh(new THREE.CylinderGeometry(.12,.15,h*.3,6),M.wood);
+  trunk.position.y=h*.15; trunk.castShadow=true; g.add(trunk);
+  const layers=3+Math.floor(Math.random()*2);
+  for(let i=0;i<layers;i++){
+    const t=i/layers, r=(1-t*0.7)*h*0.35;
+    const cone=new THREE.Mesh(new THREE.ConeGeometry(r,h/layers*1.1,7),i%2===0?M.green:M.greenD);
+    cone.position.y=h*0.3+(h*0.7)*(i+0.5)/layers;
+    cone.castShadow=true; cone.receiveShadow=true; g.add(cone);
+  }
+  for(let i=0;i<layers;i++){
+    const t=i/layers, r=(1-t*0.7)*h*0.33;
+    const cap=new THREE.Mesh(new THREE.ConeGeometry(r,0.15,7),M.snow);
+    cap.position.y=h*0.3+(h*0.7)*(i+1)/layers-0.1; g.add(cap);
+  }
+  g.position.set(x,0,z); scene.add(g);
+}
+[[-10,-9],[-9,-11],[-12,-6],[-8,-12],[-13,-8],
+ [9,-10],[11,-8],[10,-12],[13,-10],
+ [-10,10],[-12,8],[-11,12],[-9,9],
+ [10,10],[9,12],[12,9],[13,11],
+ [-6,-14],[6,-14],[0,-15],[-6,14],[6,14],[0,15],
+ [-15,0],[-15,4],[-15,-4],[15,0],[15,4],[15,-4],
+].forEach(([x,z])=>makeTree(x,z,2.5+Math.random()*1.5));
+
+/* ---- snowfall ---- */
+const snowCount=500;
+const snowGeo=new THREE.BufferGeometry();
+const snowPos=new Float32Array(snowCount*3);
+const snowVel=new Float32Array(snowCount);
+for(let i=0;i<snowCount;i++){
+  snowPos[i*3]=(Math.random()-.5)*40;
+  snowPos[i*3+1]=Math.random()*15;
+  snowPos[i*3+2]=(Math.random()-.5)*40;
+  snowVel[i]=0.5+Math.random()*1.5;
+}
+snowGeo.setAttribute('position',new THREE.BufferAttribute(snowPos,3));
+scene.add(new THREE.Points(snowGeo,new THREE.PointsMaterial({color:'#fff',size:0.08,transparent:true,opacity:0.8})));
+
+function updateSnow(dt,cx,cz){
+  const p=snowGeo.attributes.position.array;
+  for(let i=0;i<snowCount;i++){
+    p[i*3+1]-=snowVel[i]*dt;
+    p[i*3]+=Math.sin(performance.now()*0.001+i)*0.003;
+    if(p[i*3+1]<0){
+      p[i*3+1]=12+Math.random()*3;
+      p[i*3]=cx+(Math.random()-.5)*35;
+      p[i*3+2]=cz+(Math.random()-.5)*35;
+    }
+  }
+  snowGeo.attributes.position.needsUpdate=true;
+}
+
+/* ---- player ---- */
+const player=new THREE.Group();
+const pLeftLeg=new THREE.Mesh(new THREE.CylinderGeometry(.07,.08,.3,6),M.brown);
+pLeftLeg.position.set(-.1,.15,0); pLeftLeg.castShadow=true; player.add(pLeftLeg);
+const pRightLeg=new THREE.Mesh(new THREE.CylinderGeometry(.07,.08,.3,6),M.brown);
+pRightLeg.position.set(.1,.15,0); pRightLeg.castShadow=true; player.add(pRightLeg);
+const pBody=new THREE.Mesh(new THREE.CylinderGeometry(.2,.22,.55,8),M.blue);
+pBody.position.y=.58; pBody.castShadow=true; player.add(pBody);
+const pLeftArm=new THREE.Mesh(new THREE.CylinderGeometry(.055,.06,.4,6),M.blue);
+pLeftArm.position.set(-.28,.6,0); pLeftArm.castShadow=true; player.add(pLeftArm);
+const pRightArm=new THREE.Mesh(new THREE.CylinderGeometry(.055,.06,.4,6),M.blue);
+pRightArm.position.set(.28,.6,0); pRightArm.castShadow=true; player.add(pRightArm);
+const pHead=new THREE.Mesh(new THREE.SphereGeometry(.18,8,6),M.skin);
+pHead.position.y=1.05; pHead.castShadow=true; player.add(pHead);
+const pHat=new THREE.Mesh(new THREE.CylinderGeometry(.12,.2,.1,8),M.blue);
+pHat.position.y=1.2; player.add(pHat);
+player.position.set(0,0,2);
+scene.add(player);
+let walkPhase=0;
+
+/* ---- resource points ---- */
+function makeIcon(emoji){
+  const c=document.createElement('canvas'); c.width=64; c.height=64;
+  const ctx=c.getContext('2d'); ctx.font='48px serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(emoji,32,35);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true}));
+  sp.scale.set(.8,.8,1); return sp;
+}
+
+const resList=[];
+[{type:'ore',x:8,z:10},{type:'ore',x:-10,z:6},{type:'wood',x:-8,z:-7},{type:'wood',x:11,z:-5},{type:'meat',x:5,z:-11}].forEach(def=>{
+  const g=new THREE.Group();
+  if(def.type==='ore'){
+    [[0,0,.4],[.4,.1,.35],[-.3,.2,.28],[.1,-.35,.22]].forEach(([ox,oz,s],i)=>{
+      const r=new THREE.Mesh(new THREE.DodecahedronGeometry(s,0),i%2?M.stoneL:M.stone);
+      r.position.set(ox,s*.45,oz); r.rotation.set(i*.8,i*1.2,i*.5);
+      r.castShadow=true; r.receiveShadow=true; g.add(r);
+    });
+    const ic=makeIcon('⛏️'); ic.position.y=2.2; g.add(ic);
+  } else if(def.type==='wood'){
+    const st=new THREE.Mesh(new THREE.CylinderGeometry(.35,.4,.45,8),M.wood);
+    st.position.y=.225; st.castShadow=true; g.add(st);
+    const tp=new THREE.Mesh(new THREE.CylinderGeometry(.34,.34,.04,8),M.woodD);
+    tp.position.y=.45; g.add(tp);
+    for(let i=0;i<3;i++){
+      const a=(i/3)*Math.PI*2+.3;
+      const log=new THREE.Mesh(new THREE.CylinderGeometry(.08,.1,.6,6),M.wood);
+      log.position.set(Math.cos(a)*.55,.1,Math.sin(a)*.55);
+      log.rotation.z=Math.PI/2; log.rotation.y=a; log.castShadow=true; g.add(log);
+    }
+    const ic=makeIcon('🪵'); ic.position.y=2.2; g.add(ic);
+  } else {
+    for(const s of [-1,1]){
+      const post=new THREE.Mesh(new THREE.CylinderGeometry(.06,.08,1.4,6),M.wood);
+      post.position.set(s*.45,.7,0); post.castShadow=true; g.add(post);
+    }
+    const bar=new THREE.Mesh(new THREE.CylinderGeometry(.04,.04,1.1,6),M.wood);
+    bar.position.y=1.3; bar.rotation.z=Math.PI/2; bar.castShadow=true; g.add(bar);
+    for(let i=-1;i<=1;i++){
+      const pc=new THREE.Mesh(new THREE.SphereGeometry(.14,6,4),M.meat);
+      pc.scale.y=1.6; pc.position.set(i*.28,.85,0); pc.castShadow=true; g.add(pc);
+      const rp=new THREE.Mesh(new THREE.CylinderGeometry(.015,.015,.3,4),M.woodD);
+      rp.position.set(i*.28,1.1,0); g.add(rp);
+    }
+    const ic=makeIcon('🍖'); ic.position.y=2.2; g.add(ic);
+  }
+  g.position.set(def.x,0,def.z); scene.add(g);
+  resList.push({type:def.type, mesh:g, pos:new THREE.Vector3(def.x,0,def.z), progress:0});
+});
+
+/* ---- sell station ---- */
+const sellGroup=new THREE.Group();
+const sBase=new THREE.Mesh(new THREE.BoxGeometry(1.6,.9,.8),M.wood);
+sBase.position.y=.45; sBase.castShadow=true; sBase.receiveShadow=true; sellGroup.add(sBase);
+const sTop=new THREE.Mesh(new THREE.BoxGeometry(1.8,.06,.9),M.woodD);
+sTop.position.y=.93; sellGroup.add(sTop);
+[[-0.75,-0.35],[0.75,-0.35],[0.75,0.35],[-0.75,0.35]].forEach(([dx,dz])=>{
+  const p=new THREE.Mesh(new THREE.CylinderGeometry(.04,.05,1,6),M.wood);
+  p.position.set(dx,1.4,dz); p.castShadow=true; sellGroup.add(p);
+});
+const sRoof=new THREE.Mesh(new THREE.BoxGeometry(2,.06,1.1),M.red);
+sRoof.position.y=1.9; sRoof.castShadow=true; sellGroup.add(sRoof);
+for(let i=0;i<3;i++){
+  const coin=new THREE.Mesh(new THREE.CylinderGeometry(.1,.1,.03,12),M.gold);
+  coin.position.set(-.3+i*.3,1,0); sellGroup.add(coin);
+}
+const sellIcon=makeIcon('💰'); sellIcon.position.y=2.4; sellIcon.scale.set(1.2,1.2,1); sellGroup.add(sellIcon);
+scene.add(sellGroup);
+const sellPos=new THREE.Vector3(0,0,0);
+let sellCooldown=0;
+
+/* ---- economy ---- */
+const eco={
+  money:0, bag:{ore:0,wood:0,meat:0}, cap:10,
+  prices:{ore:3,wood:2,meat:5},
+  total(){ return this.bag.ore+this.bag.wood+this.bag.meat; },
+  isFull(){ return this.total()>=this.cap; },
+  add(t){ if(this.isFull()) return false; this.bag[t]++; return true; },
+  sellAll(){
+    let e=0;
+    for(const t of ['ore','wood','meat']){ e+=this.bag[t]*this.prices[t]; this.bag[t]=0; }
+    this.money+=e; return e;
+  },
+};
+
+/* ---- joystick ---- */
+const joyEl=document.getElementById('joy');
+const knobEl=document.getElementById('knob');
+const joyState={x:0,z:0,active:false};
+const JOY_MAX=42;
+
+function joyCenter(){const r=joyEl.getBoundingClientRect();return{x:r.left+r.width/2,y:r.top+r.height/2};}
+function joyMove(cx,cy){
+  const c=joyCenter(); let dx=cx-c.x, dy=cy-c.y;
+  const d=Math.sqrt(dx*dx+dy*dy);
+  if(d>JOY_MAX){dx=dx/d*JOY_MAX; dy=dy/d*JOY_MAX;}
+  knobEl.style.transform='translate('+dx+'px,'+dy+'px)';
+  joyState.x=dx/JOY_MAX; joyState.z=dy/JOY_MAX;
+}
+function joyEnd(){joyState.active=false;joyState.x=0;joyState.z=0;knobEl.style.transform='translate(0px,0px)';}
+
+joyEl.addEventListener('touchstart',function(e){e.preventDefault();joyState.active=true;joyMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+joyEl.addEventListener('touchmove',function(e){e.preventDefault();if(joyState.active)joyMove(e.touches[0].clientX,e.touches[0].clientY);},{passive:false});
+joyEl.addEventListener('touchend',function(e){e.preventDefault();joyEnd();},{passive:false});
+joyEl.addEventListener('touchcancel',function(){joyEnd();});
+joyEl.addEventListener('mousedown',function(e){joyState.active=true;joyMove(e.clientX,e.clientY);
+  function mm(e){if(joyState.active)joyMove(e.clientX,e.clientY);}
+  function mu(){joyEnd();window.removeEventListener('mousemove',mm);window.removeEventListener('mouseup',mu);}
+  window.addEventListener('mousemove',mm);window.addEventListener('mouseup',mu);
+});
+
+/* ---- camera ---- */
+const CAM_THETA=Math.PI/4, CAM_PHI=Math.PI/5, CAM_DIST=15;
+const sinT=Math.sin(CAM_THETA), cosT=Math.cos(CAM_THETA);
+
+function updateCam(tgt){
+  camera.position.set(
+    tgt.x+CAM_DIST*Math.cos(CAM_PHI)*Math.sin(CAM_THETA),
+    tgt.y+CAM_DIST*Math.sin(CAM_PHI),
+    tgt.z+CAM_DIST*Math.cos(CAM_PHI)*Math.cos(CAM_THETA)
+  );
+  camera.lookAt(tgt.x, tgt.y+0.5, tgt.z);
+}
+
+const _proj=new THREE.Vector3();
+function w2s(x,y,z){
+  _proj.set(x,y,z).project(camera);
+  return{x:(0.5+_proj.x*0.5)*window.innerWidth, y:(0.5-_proj.y*0.5)*window.innerHeight};
+}
+
+/* ---- UI refs ---- */
+const fpsEl=document.getElementById('fps');
+const hudEl=document.getElementById('hud');
+const barEl=document.getElementById('bar');
+const barFill=document.getElementById('barFill');
+const fullEl=document.getElementById('full');
+const sellPopEl=document.getElementById('sellPop');
+
+/* ---- resize ---- */
+window.addEventListener('resize',function(){
+  camera.aspect=window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth,window.innerHeight);
+});
+
+/* ---- game loop ---- */
+updateCam(player.position);
+
+let lastTime=performance.now();
+let fpsFrames=0, fpsLast=performance.now();
+
+function animate(){
+  requestAnimationFrame(animate);
+  const now=performance.now();
+  const dt=Math.min((now-lastTime)/1000, 0.1);
+  lastTime=now;
+
+  // joystick → world
+  const wx= joyState.x*cosT + joyState.z*sinT;
+  const wz=-joyState.x*sinT + joyState.z*cosT;
+  const moving=Math.abs(joyState.x)>0.05||Math.abs(joyState.z)>0.05;
+
+  // player movement
+  if(moving){
+    player.position.x+=wx*5*dt;
+    player.position.z+=wz*5*dt;
+    player.position.x=Math.max(-22,Math.min(22,player.position.x));
+    player.position.z=Math.max(-22,Math.min(22,player.position.z));
+    player.rotation.y=Math.atan2(wx,wz);
+    walkPhase+=dt*10;
+    const s=Math.sin(walkPhase)*0.25;
+    pLeftLeg.rotation.x=s; pRightLeg.rotation.x=-s;
+    pLeftArm.rotation.x=-s*0.7; pRightArm.rotation.x=s*0.7;
+  } else {
+    pLeftLeg.rotation.x=0; pRightLeg.rotation.x=0;
+    pLeftArm.rotation.x=0; pRightArm.rotation.x=0;
+  }
+
+  // camera follow
+  updateCam(player.position);
+  sun.position.set(player.position.x+8,15,player.position.z+6);
+  sun.target.position.copy(player.position);
+  sun.target.updateMatrixWorld();
+
+  // resource collection
+  let collecting=null;
+  for(const r of resList){
+    const d=player.position.distanceTo(r.pos);
+    if(d<1.8 && !eco.isFull()){
+      r.progress+=dt/1.8;
+      if(r.progress>=1){ eco.add(r.type); r.progress=0; }
+      collecting={progress:r.progress};
+    } else {
+      r.progress=Math.max(0,r.progress-dt*2);
+    }
+  }
+
+  // sell station
+  sellCooldown=Math.max(0,sellCooldown-dt);
+  let earned=0;
+  if(sellCooldown<=0 && player.position.distanceTo(sellPos)<2 && eco.total()>0){
+    earned=eco.sellAll(); sellCooldown=0.5;
+  }
+
+  // HUD
+  hudEl.innerHTML='<span style="color:#ffe040">💰 '+eco.money+'</span><br>🎒 '+eco.total()+'/'+eco.cap
+    +(eco.bag.ore?' · 矿'+eco.bag.ore:'')+(eco.bag.wood?' · 木'+eco.bag.wood:'')+(eco.bag.meat?' · 肉'+eco.bag.meat:'');
+
+  // floating UI
+  const head=w2s(player.position.x,player.position.y+1.5,player.position.z);
+  if(collecting){
+    barEl.style.display='block'; barEl.style.left=(head.x-28)+'px'; barEl.style.top=(head.y-18)+'px';
+    barFill.style.width=(collecting.progress*100)+'%';
+    fullEl.style.display='none';
+  } else if(eco.isFull()){
+    barEl.style.display='none';
+    fullEl.style.display='block'; fullEl.style.left=(head.x-28)+'px'; fullEl.style.top=(head.y-22)+'px';
+  } else {
+    barEl.style.display='none'; fullEl.style.display='none';
+  }
+
+  if(earned>0){
+    const ss=w2s(0,2.5,0);
+    sellPopEl.textContent='+$'+earned;
+    sellPopEl.style.left=(ss.x-20)+'px'; sellPopEl.style.top=ss.y+'px';
+    sellPopEl.style.transition='none'; sellPopEl.style.opacity='1'; sellPopEl.style.transform='translateY(0)';
+    void sellPopEl.offsetWidth;
+    sellPopEl.style.transition='transform .8s ease-out,opacity .8s ease-out';
+    sellPopEl.style.opacity='0'; sellPopEl.style.transform='translateY(-40px)';
+  }
+
+  // snow
+  updateSnow(dt,player.position.x,player.position.z);
+
+  renderer.render(scene,camera);
+
+  // fps
+  fpsFrames++;
+  if(now-fpsLast>=500){
+    fpsEl.textContent=Math.round(fpsFrames/((now-fpsLast)/1000))+' fps';
+    fpsFrames=0; fpsLast=now;
+  }
+}
+
+animate();
+</script>
 </body>
 </html>
