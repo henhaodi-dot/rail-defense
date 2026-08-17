@@ -30,6 +30,8 @@ canvas{display:block;width:100%;height:100%;touch-action:none;}
 #buildBtn{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%;
   background:rgba(0,0,0,.55);color:#fff;font-size:26px;display:flex;align-items:center;
   justify-content:center;z-index:100;border:2px solid rgba(255,255,255,.3);touch-action:none;cursor:pointer;}
+#menuBg{position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:190;display:none;touch-action:none;}
+#menuBg.open{display:block;}
 #buildMenu{position:fixed;bottom:0;left:0;right:0;background:rgba(0,0,0,.8);padding:12px 16px 20px;
   z-index:200;transform:translateY(100%);transition:transform .25s ease;border-radius:16px 16px 0 0;
   backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);}
@@ -57,6 +59,7 @@ canvas{display:block;width:100%;height:100%;touch-action:none;}
 <div id="sellPop"></div>
 <div id="joy"><div id="knob"></div></div>
 <div id="err"></div>
+<div id="menuBg"></div>
 <div id="buildBtn">🔨</div>
 <div id="buildMenu">
   <div class="title">建造</div>
@@ -319,6 +322,7 @@ let placeType=null;
 
 const buildBtn=document.getElementById('buildBtn');
 const buildMenuEl=document.getElementById('buildMenu');
+const menuBg=document.getElementById('menuBg');
 const placeUI=document.getElementById('placeUI');
 const placeOk=document.getElementById('placeOk');
 const placeNo=document.getElementById('placeNo');
@@ -326,14 +330,17 @@ let menuOpen=false;
 
 buildBtn.addEventListener('touchstart',function(e){e.preventDefault();e.stopPropagation();toggleMenu();},{passive:false});
 buildBtn.addEventListener('click',function(e){e.stopPropagation();toggleMenu();});
+menuBg.addEventListener('touchstart',function(e){e.preventDefault();e.stopPropagation();closeMenu();},{passive:false});
+menuBg.addEventListener('click',function(e){e.stopPropagation();closeMenu();});
 
 function toggleMenu(){
   if(placeType){cancelPlace();return;}
   menuOpen=!menuOpen;
   buildMenuEl.classList.toggle('open',menuOpen);
+  menuBg.classList.toggle('open',menuOpen);
   if(menuOpen)updateMenuItems();
 }
-function closeMenu(){menuOpen=false;buildMenuEl.classList.remove('open');}
+function closeMenu(){menuOpen=false;buildMenuEl.classList.remove('open');menuBg.classList.remove('open');}
 
 document.querySelectorAll('.bitem').forEach(el=>{
   function handler(e){e.preventDefault();e.stopPropagation();
