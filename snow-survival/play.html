@@ -49,6 +49,18 @@ canvas{display:block;width:100%;height:100%;touch-action:none;}
   color:#fff;touch-action:none;cursor:pointer;}
 #placeOk{background:#4caf50;}
 #placeNo{background:#e53935;}
+#waveBar{position:fixed;top:50px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.6);
+  color:#fff;font:bold 13px system-ui;padding:6px 16px;border-radius:10px;z-index:50;
+  pointer-events:none;white-space:nowrap;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);}
+#baseBar{position:fixed;top:8px;left:50%;transform:translateX(-50%);width:140px;height:10px;
+  background:rgba(0,0,0,.5);border-radius:5px;overflow:hidden;z-index:50;pointer-events:none;}
+#baseFill{width:100%;height:100%;background:#e04040;border-radius:5px;transition:width .3s;}
+#gameOver{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px;}
+#gameOver h1{color:#fff;font:bold 36px system-ui;margin:0;}
+#gameOver p{color:#ccc;font:16px system-ui;margin:0;}
+#gameOver button{background:#4caf50;color:#fff;border:none;padding:12px 32px;border-radius:12px;
+  font:bold 16px system-ui;cursor:pointer;touch-action:none;}
 </style>
 </head>
 <body>
@@ -59,6 +71,9 @@ canvas{display:block;width:100%;height:100%;touch-action:none;}
 <div id="sellPop"></div>
 <div id="joy"><div id="knob"></div></div>
 <div id="err"></div>
+<div id="baseBar"><div id="baseFill"></div></div>
+<div id="waveBar"></div>
+<div id="gameOver"><h1>基地沦陷</h1><p id="goText"></p><button id="goBtn">重新开始</button></div>
 <div id="menuBg"></div>
 <div id="buildBtn">🔨</div>
 <div id="buildMenu">
@@ -404,7 +419,9 @@ function confirmPlace(){
   mesh.position.set(pp.x,0,pp.z);
   if(placeType==='fence')mesh.rotation.y=player.rotation.y;
   scene.add(mesh);
-  buildings.push({type:placeType,x:pp.x,z:pp.z,mesh});
+  const bld={type:placeType,x:pp.x,z:pp.z,mesh};
+  if(placeType==='fence'){bld.hp=200;bld.hpMax=200;}
+  buildings.push(bld);
 
   if(placeType==='hut')spawnWorker(pp.x,pp.z);
   if(placeType==='depot')spawnTrack(pp.x,pp.z);
@@ -542,6 +559,198 @@ function updateTrack(tr,dt){
   tr.cart.rotation.y=tr.angle+(tr.dir<0?Math.PI:0);
 }
 
+/* ================ ROUND 3: ENEMIES & COMBAT ================ */
+let baseHP=1000, baseHPMax=1000, gameOverFlag=false;
+let wave=0, waveTimer=15, waveActive=false;
+const enemies=[], projectiles=[];
+
+const M_white=new THREE.MeshStandardMaterial({color:'#e8e8e8',roughness:.7});
+const M_gray=new THREE.MeshStandardMaterial({color:'#808080',roughness:.7});
+const M_darkgray=new THREE.MeshStandardMaterial({color:'#505050',roughness:.7});
+const M_black=new THREE.MeshStandardMaterial({color:'#222',roughness:.7});
+
+function makeBearModel(){
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.BoxGeometry(.9,.7,1.4),M_white);
+  body.position.y=.65;body.castShadow=true;g.add(body);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.5,.45,.5),M_white);
+  head.position.set(0,.9,.8);head.castShadow=true;g.add(head);
+  const snout=new THREE.Mesh(new THREE.BoxGeometry(.2,.15,.2),M_darkgray);
+  snout.position.set(0,.8,1.05);g.add(snout);
+  for(const s of[-.15,.15]){
+    const ear=new THREE.Mesh(new THREE.SphereGeometry(.08,6,4),M_white);
+    ear.position.set(s,1.15,.75);g.add(ear);
+  }
+  const nose=new THREE.Mesh(new THREE.SphereGeometry(.05,6,4),M_black);
+  nose.position.set(0,.82,1.15);g.add(nose);
+  for(const[lx,lz]of[[-.3,-.4],[.3,-.4],[-.3,.4],[.3,.4]]){
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(.1,.1,.4,6),M_white);
+    leg.position.set(lx,.2,lz);leg.castShadow=true;g.add(leg);
+  }
+  return g;
+}
+function makeWolfModel(){
+  const g=new THREE.Group();
+  const body=new THREE.Mesh(new THREE.BoxGeometry(.5,.4,1),M_gray);
+  body.position.y=.45;body.castShadow=true;g.add(body);
+  const head=new THREE.Mesh(new THREE.BoxGeometry(.35,.3,.4),M_gray);
+  head.position.set(0,.6,.6);head.castShadow=true;g.add(head);
+  const snout=new THREE.Mesh(new THREE.BoxGeometry(.15,.12,.25),M_darkgray);
+  snout.position.set(0,.55,.85);g.add(snout);
+  for(const s of[-.1,.1]){
+    const ear=new THREE.Mesh(new THREE.ConeGeometry(.06,.15,4),M_gray);
+    ear.position.set(s,.8,.55);ear.castShadow=true;g.add(ear);
+  }
+  for(const[lx,lz]of[[-.18,-.3],[.18,-.3],[-.18,.3],[.18,.3]]){
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(.05,.05,.3,6),M_gray);
+    leg.position.set(lx,.15,lz);leg.castShadow=true;g.add(leg);
+  }
+  const tail=new THREE.Mesh(new THREE.CylinderGeometry(.03,.01,.35,5),M_gray);
+  tail.position.set(0,.55,-.55);tail.rotation.x=-.6;g.add(tail);
+  return g;
+}
+
+function makeHPBar(){
+  const c=document.createElement('canvas');c.width=64;c.height=8;
+  const tex=new THREE.CanvasTexture(c);
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex,transparent:true}));
+  sp.scale.set(1,.12,1);
+  return{sprite:sp,canvas:c,tex};
+}
+
+function updateHPBar(bar,ratio){
+  const ctx=bar.canvas.getContext('2d');
+  ctx.clearRect(0,0,64,8);
+  ctx.fillStyle='#333';ctx.fillRect(0,0,64,8);
+  ctx.fillStyle=ratio>.5?'#4caf50':ratio>.25?'#ff9800':'#f44336';
+  ctx.fillRect(1,1,62*Math.max(0,ratio),6);
+  bar.tex.needsUpdate=true;
+}
+
+function spawnEnemy(type){
+  const isBear=type==='bear';
+  const mesh=isBear?makeBearModel():makeWolfModel();
+  const side=Math.floor(Math.random()*4);
+  let x,z;
+  if(side===0){x=-24;z=(Math.random()-.5)*40;}
+  else if(side===1){x=24;z=(Math.random()-.5)*40;}
+  else if(side===2){x=(Math.random()-.5)*40;z=-24;}
+  else{x=(Math.random()-.5)*40;z=24;}
+  mesh.position.set(x,0,z);
+  scene.add(mesh);
+  const hp=isBear?120:50;
+  const bar=makeHPBar();
+  bar.sprite.position.set(0,isBear?1.5:1.1,0);
+  mesh.add(bar.sprite);
+  updateHPBar(bar,1);
+  enemies.push({
+    mesh,type,hp,hpMax:hp,speed:isBear?2:3.5,dmg:isBear?30:12,
+    atkCD:0,bar,target:null,
+  });
+}
+
+function spawnWave(){
+  wave++;
+  const nBears=Math.min(wave,5);
+  const nWolves=wave*2+1;
+  for(let i=0;i<nBears;i++)setTimeout(()=>spawnEnemy('bear'),i*800);
+  for(let i=0;i<nWolves;i++)setTimeout(()=>spawnEnemy('wolf'),i*400+500);
+  waveActive=true;
+}
+
+function findBlockingFence(ex,ez,tx,tz){
+  for(const b of buildings){
+    if(b.type!=='fence'||!b.hp||b.hp<=0)continue;
+    const d=Math.hypot(b.x-ex,b.z-ez);
+    if(d<2.5)return b;
+  }
+  return null;
+}
+
+function updateEnemy(e,dt){
+  if(e.hp<=0)return;
+  const pos=e.mesh.position;
+  const tx=0,tz=0;
+  const dx=tx-pos.x,dz=tz-pos.z;
+  const dist=Math.sqrt(dx*dx+dz*dz);
+
+  e.atkCD=Math.max(0,e.atkCD-dt);
+
+  const fence=findBlockingFence(pos.x,pos.z,tx,tz);
+  if(fence){
+    if(e.atkCD<=0){
+      fence.hp-=e.dmg;
+      e.atkCD=1.2;
+      if(fence.hp<=0){
+        scene.remove(fence.mesh);
+        fence.mesh=null;
+      }else{
+        const ratio=fence.hp/fence.hpMax;
+        fence.mesh.traverse(c=>{if(c.isMesh)c.material=ratio>.5?M.fence:M.red;});
+      }
+    }
+    return;
+  }
+
+  if(dist<1.5){
+    if(e.atkCD<=0){baseHP-=e.dmg;e.atkCD=1.5;}
+    return;
+  }
+
+  const s=e.speed*dt/dist;
+  pos.x+=dx*s;pos.z+=dz*s;
+  e.mesh.rotation.y=Math.atan2(dx,dz);
+}
+
+function damageEnemy(e,dmg){
+  e.hp-=dmg;
+  updateHPBar(e.bar,e.hp/e.hpMax);
+  if(e.hp<=0){
+    scene.remove(e.mesh);
+    eco.money+=e.type==='bear'?25:10;
+  }
+}
+
+function updateTowers(dt){
+  for(const b of buildings){
+    if(b.type!=='tower')continue;
+    if(!b.atkCD)b.atkCD=0;
+    b.atkCD=Math.max(0,b.atkCD-dt);
+    if(b.atkCD>0)continue;
+    let closest=null,cd=64;
+    for(const e of enemies){
+      if(e.hp<=0)continue;
+      const d=Math.hypot(e.mesh.position.x-b.x,e.mesh.position.z-b.z);
+      if(d<8&&d<cd){cd=d;closest=e;}
+    }
+    if(closest){
+      b.atkCD=1.5;
+      const arrow=new THREE.Mesh(new THREE.CylinderGeometry(.02,.02,.4,4),M.woodD);
+      arrow.position.set(b.x,2,b.z);
+      arrow.rotation.z=Math.PI/2;
+      scene.add(arrow);
+      projectiles.push({mesh:arrow,target:closest,speed:12,dmg:25});
+    }
+  }
+}
+
+function updateProjectiles(dt){
+  for(let i=projectiles.length-1;i>=0;i--){
+    const p=projectiles[i];
+    if(p.target.hp<=0){scene.remove(p.mesh);projectiles.splice(i,1);continue;}
+    const tx=p.target.mesh.position.x,tz=p.target.mesh.position.z;
+    const dx=tx-p.mesh.position.x,dz=tz-p.mesh.position.z;
+    const dy=.8-p.mesh.position.y;
+    const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
+    if(d<.5){damageEnemy(p.target,p.dmg);scene.remove(p.mesh);projectiles.splice(i,1);continue;}
+    const s=p.speed*dt/d;
+    p.mesh.position.x+=dx*s;p.mesh.position.y+=dy*s;p.mesh.position.z+=dz*s;
+    p.mesh.rotation.y=Math.atan2(dx,dz);
+  }
+}
+
+for(const b of buildings){if(b.type==='fence'){b.hp=200;b.hpMax=200;}}
+
 /* ================ JOYSTICK ================ */
 const joyEl=document.getElementById('joy');
 const knobEl=document.getElementById('knob');
@@ -635,6 +844,35 @@ function animate(){
   // tracks
   for(const tr of trackList)updateTrack(tr,dt);
 
+  // wave system
+  if(!gameOverFlag){
+    if(!waveActive){
+      waveTimer-=dt;
+      if(waveTimer<=0){spawnWave();waveTimer=60;}
+    }else{
+      const alive=enemies.some(e=>e.hp>0);
+      if(!alive){waveActive=false;waveTimer=60;}
+    }
+    for(const e of enemies)updateEnemy(e,dt);
+    updateTowers(dt);
+    updateProjectiles(dt);
+    for(let i=enemies.length-1;i>=0;i--){if(enemies[i].hp<=0)enemies.splice(i,1);}
+
+    if(baseHP<=0&&!gameOverFlag){
+      gameOverFlag=true;baseHP=0;
+      document.getElementById('goText').textContent='坚持了 '+wave+' 波';
+      document.getElementById('gameOver').style.display='flex';
+    }
+  }
+
+  // base HP bar
+  document.getElementById('baseFill').style.width=(baseHP/baseHPMax*100)+'%';
+
+  // wave HUD
+  const waveEl=document.getElementById('waveBar');
+  if(waveActive)waveEl.textContent='⚔️ 第 '+wave+' 波 · 敌人 '+enemies.length;
+  else waveEl.textContent='🛡️ 第 '+(wave+1)+' 波 · '+Math.ceil(Math.max(0,waveTimer))+'s';
+
   // HUD
   const wc=workerList.length, tc=trackList.length;
   hudEl.innerHTML='<span style="color:#ffe040">💰 '+eco.money+'</span><br>🎒 '+eco.total()+'/'+eco.cap
@@ -660,6 +898,9 @@ function animate(){
   if(now-fpsLast>=500){fpsEl.textContent=Math.round(fpsFrames/((now-fpsLast)/1000))+' fps';fpsFrames=0;fpsLast=now;}
 }
 animate();
+
+document.getElementById('goBtn').addEventListener('click',function(){location.reload();});
+document.getElementById('goBtn').addEventListener('touchstart',function(e){e.preventDefault();location.reload();},{passive:false});
 </script>
 </body>
 </html>
